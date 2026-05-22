@@ -1,0 +1,19 @@
+node_modules/
+.expo/
+dist/
+web-build/
+
+# Native build artifacts
+*.apk
+*.aab
+android/build/
+android/app/build/
+android/.gradle/
+android/.cxx/
+android/local.properties
+ios/build/
+ios/Pods/
+
+# Misc
+.DS_Store
+*.log
