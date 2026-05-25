@@ -166,7 +166,7 @@ export default function ChessScreen({ onBack }: Props) {
             onPress={onBack}
             style={styles.backButton}
           >
-            <Text style={styles.backText}>‹ Trang chủ</Text>
+            <Text style={styles.backText}>‹ Quay lại</Text>
           </TouchableOpacity>
           <Text style={styles.title}>♟ Cờ Vua</Text>
           <View style={styles.backButton} />

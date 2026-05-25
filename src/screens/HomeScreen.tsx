@@ -2,60 +2,61 @@ import React from "react";
 import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-export type GameId = "chess";
+export type Folder = "boardgame" | "tool";
 
 type Props = {
-  onSelectGame: (game: GameId) => void;
+  onSelectFolder: (folder: Folder) => void;
 };
 
-export default function HomeScreen({ onSelectGame }: Props) {
+export default function HomeScreen({ onSelectFolder }: Props) {
   return (
     <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
       <View style={styles.container}>
         <Text style={styles.brand}>AI Board Suite</Text>
-        <Text style={styles.tagline}>Chọn trò chơi</Text>
+        <Text style={styles.tagline}>Chọn mục</Text>
 
-        <GameCard
+        <FolderCard
           icon="♟"
-          title="Cờ Vua"
-          subtitle="Đấu với máy hoặc 2 người"
-          onPress={() => onSelectGame("chess")}
+          iconBg="#7FA650"
+          title="Boardgame"
+          subtitle="Chơi cờ vua, cờ tướng và game bàn cờ khác"
+          onPress={() => onSelectFolder("boardgame")}
         />
-        <GameCard
-          icon="将"
-          title="Cờ Tướng"
-          subtitle="Sắp ra mắt"
-          disabled
+        <FolderCard
+          icon="工"
+          iconBg="#5B7DB1"
+          title="Tool"
+          subtitle="Công cụ hỗ trợ chơi boardgame ngoài đời"
+          onPress={() => onSelectFolder("tool")}
         />
       </View>
     </SafeAreaView>
   );
 }
 
-type GameCardProps = {
+type CardProps = {
   icon: string;
+  iconBg: string;
   title: string;
   subtitle: string;
-  onPress?: () => void;
-  disabled?: boolean;
+  onPress: () => void;
 };
 
-function GameCard({ icon, title, subtitle, onPress, disabled }: GameCardProps) {
+function FolderCard({ icon, iconBg, title, subtitle, onPress }: CardProps) {
   return (
     <TouchableOpacity
       activeOpacity={0.85}
-      disabled={disabled}
       onPress={onPress}
-      style={[styles.card, disabled && styles.cardDisabled]}
+      style={styles.card}
     >
-      <View style={styles.cardIcon}>
+      <View style={[styles.cardIcon, { backgroundColor: iconBg }]}>
         <Text style={styles.cardIconText}>{icon}</Text>
       </View>
       <View style={styles.cardBody}>
         <Text style={styles.cardTitle}>{title}</Text>
         <Text style={styles.cardSubtitle}>{subtitle}</Text>
       </View>
-      {!disabled && <Text style={styles.cardChevron}>›</Text>}
+      <Text style={styles.cardChevron}>›</Text>
     </TouchableOpacity>
   );
 }
@@ -92,19 +93,15 @@ const styles = StyleSheet.create({
     padding: 16,
     marginBottom: 14,
   },
-  cardDisabled: {
-    opacity: 0.45,
-  },
   cardIcon: {
     width: 56,
     height: 56,
     borderRadius: 10,
-    backgroundColor: "#7FA650",
     alignItems: "center",
     justifyContent: "center",
   },
   cardIconText: {
-    fontSize: 32,
+    fontSize: 30,
     color: "#FFFFFF",
     fontWeight: "900",
   },
@@ -113,7 +110,7 @@ const styles = StyleSheet.create({
     marginLeft: 14,
   },
   cardTitle: {
-    fontSize: 19,
+    fontSize: 20,
     fontWeight: "700",
     color: "#FFFFFF",
   },
