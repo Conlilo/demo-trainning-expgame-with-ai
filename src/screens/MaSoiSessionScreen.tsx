@@ -6,7 +6,8 @@ import {
   TouchableOpacity,
   ScrollView,
   Switch,
-  TextInput,
+  Modal,
+  Dimensions,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { findToolGame, ToolCard, ToolGame } from "../tools/data";
@@ -16,14 +17,52 @@ type Props = {
   onBack: () => void;
 };
 
-type Phase = "setup" | "night" | "day";
+type Phase = "setup-count" | "setup-deck" | "night" | "day";
+type NightSubStep = "identify" | "action";
+
+type PlayerStatus =
+  | "lover"
+  | "bitten"
+  | "protected"
+  | "poisoned"
+  | "revived"
+  | "hunted-target";
 
 type Player = {
   id: string;
   name: string;
   roleId: string | null;
   alive: boolean;
+  statuses: PlayerStatus[];
 };
+
+const SCREEN_WIDTH = Dimensions.get("window").width;
+const DAN_ID = "dan";
+
+/** Status visuals — used for border colour and the sub-label under each seat. */
+const STATUS_VISUAL: Record<PlayerStatus, { color: string; label: string }> = {
+  bitten: { color: "#D32F2F", label: "Bị cắn" },
+  protected: { color: "#1E88E5", label: "Được bảo vệ" },
+  poisoned: { color: "#8E24AA", label: "Bị hạ độc" },
+  revived: { color: "#43A047", label: "Được hồi sinh" },
+  "hunted-target": { color: "#EF6C00", label: "Bị treo thưởng" },
+  lover: { color: "#EC407A", label: "Người yêu" },
+};
+
+/** When a player has multiple statuses, the first one in this list wins. */
+const STATUS_PRIORITY: PlayerStatus[] = [
+  "revived",
+  "protected",
+  "bitten",
+  "poisoned",
+  "hunted-target",
+  "lover",
+];
+
+function topStatus(statuses: PlayerStatus[]): PlayerStatus | null {
+  for (const s of STATUS_PRIORITY) if (statuses.includes(s)) return s;
+  return null;
+}
 
 export default function MaSoiSessionScreen(props: Props) {
   const game = findToolGame(props.gameId);
@@ -31,10 +70,7 @@ export default function MaSoiSessionScreen(props: Props) {
   return <Session game={game} {...props} />;
 }
 
-function Session({
-  game,
-  onBack,
-}: Props & { game: ToolGame }) {
+function Session({ game, onBack }: Props & { game: ToolGame }) {
   const roles = game.cards;
   const nightRoles = useMemo(
     () =>
@@ -44,39 +80,59 @@ function Session({
     [game.id]
   );
 
-  const [phase, setPhase] = useState<Phase>("setup");
+  const [phase, setPhase] = useState<Phase>("setup-count");
   const [dayNum, setDayNum] = useState(1);
   const [players, setPlayers] = useState<Player[]>(() =>
     makePlayers(game.defaultPlayers)
   );
   const [composition, setComposition] = useState<Record<string, number>>(() =>
-    defaultComposition(game.defaultPlayers)
+    defaultComposition(game.defaultPlayers, roles)
   );
   const [nightStep, setNightStep] = useState(0);
+  const [nightSubStep, setNightSubStep] = useState<NightSubStep>("identify");
+  const [selectedTargets, setSelectedTargets] = useState<string[]>([]);
   const [log, setLog] = useState<string[]>([]);
-  const [selectedTarget, setSelectedTarget] = useState<string | null>(null);
   const [revealRoles, setRevealRoles] = useState(true);
 
-  // Only roles still represented by an alive player turn up at night.
+  // Game-long effects
+  const [hunterTargetId, setHunterTargetId] = useState<string | null>(null);
+  const [lovers, setLovers] = useState<[string, string] | null>(null);
+  const [witchHealUsed, setWitchHealUsed] = useState(false);
+  const [witchPoisonUsed, setWitchPoisonUsed] = useState(false);
+
+  // Tiên tri reveal modal (shown after picking a target).
+  const [reveal, setReveal] = useState<{
+    playerId: string;
+    faction: "Sói" | "Dân";
+  } | null>(null);
+
+  // Night 1: include every role the GM put in the deck (no players identified
+  // yet). Later nights: only roles with at least one alive player.
   const nightTurns = useMemo(() => {
-    const firstNight = dayNum === 1;
     return nightRoles.filter((r) => {
-      if (r.onlyFirstNight && !firstNight) return false;
+      if (dayNum === 1) return (composition[r.id] ?? 0) > 0;
+      if (r.onlyFirstNight) return false;
       return players.some((p) => p.alive && p.roleId === r.id);
     });
-  }, [nightRoles, players, dayNum]);
+  }, [nightRoles, players, dayNum, composition]);
 
   const currentNightRole = nightTurns[nightStep];
-  const winner = useMemo(() => checkWinner(players, roles), [players, roles]);
-  const totalComposition = sum(Object.values(composition));
-  const compositionMatches = totalComposition === players.length;
+
+  const winner = useMemo(
+    () => (phase === "day" ? checkWinner(players, roles) : null),
+    [players, roles, phase]
+  );
+
+  const totalDeck = sum(Object.values(composition));
+  const deckMatches = totalDeck === players.length;
+  const hasSoi = (composition["soi"] ?? 0) > 0;
 
   // ---- Setup actions ------------------------------------------------------
 
   const adjustPlayerCount = (delta: number): void => {
+    const next = Math.max(4, Math.min(16, players.length + delta));
+    if (next === players.length) return;
     setPlayers((prev) => {
-      const next = Math.max(4, Math.min(20, prev.length + delta));
-      if (next === prev.length) return prev;
       if (next > prev.length) {
         const extras = Array.from({ length: next - prev.length }, (_, i) =>
           blankPlayer(prev.length + i + 1)
@@ -85,10 +141,14 @@ function Session({
       }
       return prev.slice(0, next);
     });
-  };
-
-  const renamePlayer = (id: string, name: string): void => {
-    setPlayers((prev) => prev.map((p) => (p.id === id ? { ...p, name } : p)));
+    setComposition((prev) => {
+      const others = sum(
+        Object.entries(prev)
+          .filter(([id]) => id !== DAN_ID)
+          .map(([, n]) => n)
+      );
+      return { ...prev, [DAN_ID]: Math.max(0, next - others) };
+    });
   };
 
   const adjustRoleCount = (roleId: string, delta: number): void => {
@@ -98,68 +158,269 @@ function Session({
     });
   };
 
-  const resetComposition = (): void => {
-    setComposition(defaultComposition(players.length));
-  };
+  const resetComposition = (): void =>
+    setComposition(defaultComposition(players.length, roles));
+
+  const goToSetupDeck = (): void => setPhase("setup-deck");
+  const goToSetupCount = (): void => setPhase("setup-count");
 
   const startGame = (): void => {
-    setPlayers((prev) => assignRoles(prev, composition));
     setPhase("night");
     setDayNum(1);
     setNightStep(0);
-    setSelectedTarget(null);
+    setSelectedTargets([]);
     setLog([]);
+    setNightSubStep("identify");
+    setHunterTargetId(null);
+    setLovers(null);
+    setWitchHealUsed(false);
+    setWitchPoisonUsed(false);
+    setReveal(null);
+    setPlayers((prev) =>
+      prev.map((p) => ({ ...p, roleId: null, alive: true, statuses: [] }))
+    );
   };
 
-  // ---- Night actions ------------------------------------------------------
+  // ---- Night identify -----------------------------------------------------
 
-  const advanceNight = (action: "act" | "skip"): void => {
-    if (!currentNightRole) return;
-    if (action === "act" && selectedTarget) {
-      const target = players.find((p) => p.id === selectedTarget);
-      if (target) {
-        setLog((l) => [
-          ...l,
-          `Đêm ${dayNum} · ${currentNightRole.name} → ${target.name}`,
-        ]);
+  const toggleIdentifyMark = (playerId: string): void => {
+    const role = currentNightRole;
+    if (!role) return;
+    setPlayers((prev) =>
+      prev.map((p) => {
+        if (p.id !== playerId) return p;
+        if (p.roleId === role.id) return { ...p, roleId: null };
+        if (p.roleId == null) {
+          const have = prev.filter((x) => x.roleId === role.id).length;
+          const max = composition[role.id] ?? 0;
+          if (have >= max) return p;
+          return { ...p, roleId: role.id };
+        }
+        return p; // locked
+      })
+    );
+  };
+
+  const onIdentifyContinue = (): void => {
+    setSelectedTargets([]);
+    setNightSubStep("action");
+  };
+
+  // ---- Night action: target selection -------------------------------------
+
+  const onSelectTarget = (playerId: string): void => {
+    const role = currentNightRole;
+    if (!role) return;
+    const max = role.actionTargets ?? 1;
+    setSelectedTargets((prev) => {
+      if (prev.includes(playerId)) {
+        return prev.filter((id) => id !== playerId);
       }
-    } else if (action === "skip") {
-      setLog((l) => [
-        ...l,
-        `Đêm ${dayNum} · ${currentNightRole.name} bỏ qua`,
-      ]);
-    }
-    setSelectedTarget(null);
-    if (nightStep + 1 >= nightTurns.length) {
-      setPhase("day");
-    } else {
-      setNightStep((s) => s + 1);
-    }
+      if (prev.length >= max) {
+        if (max === 1) return [playerId]; // replace for single-select
+        return prev; // ignore extra for multi-select
+      }
+      return [...prev, playerId];
+    });
   };
+
+  // ---- Night action: confirm/skip per role -------------------------------
+
+  const onActionAdvance = (action: "act" | "skip"): void => {
+    const role = currentNightRole;
+    if (!role) return advanceFromAction();
+
+    if (action === "skip" || selectedTargets.length === 0) {
+      logEntry(`Đêm ${dayNum} · ${role.name} bỏ qua`);
+      advanceFromAction();
+      return;
+    }
+
+    applyRoleAction(role, selectedTargets);
+
+    const targetNames = selectedTargets
+      .map((id) => players.find((p) => p.id === id)?.name)
+      .filter(Boolean)
+      .join(", ");
+    logEntry(`Đêm ${dayNum} · ${role.name} → ${targetNames}`);
+
+    // Tiên tri shows a faction-reveal modal before moving on.
+    if (role.id === "tien-tri") {
+      const target = players.find((p) => p.id === selectedTargets[0]);
+      const targetRole = roles.find((r) => r.id === target?.roleId);
+      const faction: "Sói" | "Dân" =
+        targetRole?.faction === "Sói" ? "Sói" : "Dân";
+      setReveal({ playerId: selectedTargets[0], faction });
+      return; // advance happens when the modal closes
+    }
+
+    advanceFromAction();
+  };
+
+  /** Mutate players based on what role just acted. */
+  const applyRoleAction = (role: ToolCard, targetIds: string[]): void => {
+    if (role.id === "soi") {
+      // Only one bitten per night — clear any old (shouldn't exist; just in case).
+      setPlayers((prev) =>
+        prev.map((p) => {
+          const cleared = p.statuses.filter((s) => s !== "bitten");
+          return targetIds.includes(p.id)
+            ? { ...p, statuses: [...cleared, "bitten"] }
+            : { ...p, statuses: cleared };
+        })
+      );
+    } else if (role.id === "bao-ve") {
+      setPlayers((prev) =>
+        prev.map((p) => {
+          const cleared = p.statuses.filter((s) => s !== "protected");
+          return targetIds.includes(p.id)
+            ? { ...p, statuses: [...cleared, "protected"] }
+            : { ...p, statuses: cleared };
+        })
+      );
+    } else if (role.id === "cupid") {
+      setPlayers((prev) =>
+        prev.map((p) =>
+          targetIds.includes(p.id) && !p.statuses.includes("lover")
+            ? { ...p, statuses: [...p.statuses, "lover"] }
+            : p
+        )
+      );
+      if (targetIds.length === 2) {
+        setLovers([targetIds[0], targetIds[1]]);
+      }
+    } else if (role.id === "tho-san") {
+      const targetId = targetIds[0];
+      setHunterTargetId(targetId);
+      setPlayers((prev) =>
+        prev.map((p) => {
+          const cleared = p.statuses.filter((s) => s !== "hunted-target");
+          return p.id === targetId
+            ? { ...p, statuses: [...cleared, "hunted-target"] }
+            : { ...p, statuses: cleared };
+        })
+      );
+    }
+    // tien-tri: no persistent status applied
+  };
+
+  const onRevealClose = (): void => {
+    setReveal(null);
+    advanceFromAction();
+  };
+
+  // ---- Phù thủy actions ---------------------------------------------------
+
+  const witchBittenPlayers = useMemo(
+    () => players.filter((p) => p.alive && p.statuses.includes("bitten")),
+    [players]
+  );
+
+  const onWitchHeal = (targetId: string): void => {
+    if (witchHealUsed) return;
+    setPlayers((prev) =>
+      prev.map((p) =>
+        p.id === targetId && !p.statuses.includes("revived")
+          ? { ...p, statuses: [...p.statuses, "revived"] }
+          : p
+      )
+    );
+    setWitchHealUsed(true);
+    const name = players.find((p) => p.id === targetId)?.name ?? "?";
+    logEntry(`Đêm ${dayNum} · Phù thủy cứu ${name}`);
+  };
+
+  const onWitchPoison = (targetId: string): void => {
+    if (witchPoisonUsed) return;
+    setPlayers((prev) =>
+      prev.map((p) =>
+        p.id === targetId && !p.statuses.includes("poisoned")
+          ? { ...p, statuses: [...p.statuses, "poisoned"] }
+          : p
+      )
+    );
+    setWitchPoisonUsed(true);
+    const name = players.find((p) => p.id === targetId)?.name ?? "?";
+    logEntry(`Đêm ${dayNum} · Phù thủy đầu độc ${name}`);
+  };
+
+  const onWitchConfirm = (): void => {
+    advanceFromAction();
+  };
+
+  // ---- Night progression --------------------------------------------------
+
+  const advanceFromAction = (): void => {
+    setSelectedTargets([]);
+    const next = nightStep + 1;
+    if (next >= nightTurns.length) {
+      endNight();
+      return;
+    }
+    setNightStep(next);
+    setNightSubStep(dayNum === 1 ? "identify" : "action");
+  };
+
+  const endNight = (): void => {
+    setPlayers((prev) => {
+      let list = prev;
+      // Night 1: anyone still unmarked is a plain villager.
+      if (dayNum === 1) {
+        list = list.map((p) => (p.roleId == null ? { ...p, roleId: DAN_ID } : p));
+      }
+      // Resolve deaths from this night's statuses, then chain.
+      list = applyNightDeaths(list);
+      list = applyChains(list, hunterTargetId, lovers);
+      return list;
+    });
+    setPhase("day");
+  };
+
+  const logEntry = (entry: string): void => setLog((l) => [...l, entry]);
 
   // ---- Day actions --------------------------------------------------------
 
   const togglePlayerAlive = (id: string): void => {
-    setPlayers((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, alive: !p.alive } : p))
-    );
+    setPlayers((prev) => {
+      const flipped = prev.map((p) =>
+        p.id === id ? { ...p, alive: !p.alive } : p
+      );
+      return applyChains(flipped, hunterTargetId, lovers);
+    });
   };
 
   const goToNextNight = (): void => {
+    // Clear transient statuses; keep "lover" (permanent) and "hunted-target"
+    // until the Hunter re-marks during their next action.
+    setPlayers((prev) =>
+      prev.map((p) => ({
+        ...p,
+        statuses: p.statuses.filter(
+          (s) => s === "lover" || s === "hunted-target"
+        ),
+      }))
+    );
     setPhase("night");
     setDayNum((d) => d + 1);
     setNightStep(0);
-    setSelectedTarget(null);
+    setSelectedTargets([]);
+    setNightSubStep("action");
+    setReveal(null);
   };
 
   const newRound = (): void => {
-    setPhase("setup");
+    setPhase("setup-deck");
     setDayNum(1);
     setNightStep(0);
-    setSelectedTarget(null);
+    setSelectedTargets([]);
     setLog([]);
+    setHunterTargetId(null);
+    setLovers(null);
+    setWitchHealUsed(false);
+    setWitchPoisonUsed(false);
+    setReveal(null);
     setPlayers((prev) =>
-      prev.map((p) => ({ ...p, roleId: null, alive: true }))
+      prev.map((p) => ({ ...p, alive: true, roleId: null, statuses: [] }))
     );
   };
 
@@ -181,17 +442,23 @@ function Session({
               roles={roles}
               onNewRound={newRound}
             />
-          ) : phase === "setup" ? (
-            <SetupView
+          ) : phase === "setup-count" ? (
+            <SetupCountView
+              players={players}
+              onAdjustPlayers={adjustPlayerCount}
+              onContinue={goToSetupDeck}
+            />
+          ) : phase === "setup-deck" ? (
+            <SetupDeckView
               players={players}
               roles={roles}
               composition={composition}
-              totalComposition={totalComposition}
-              matches={compositionMatches}
-              onAdjustPlayers={adjustPlayerCount}
-              onRenamePlayer={renamePlayer}
+              totalDeck={totalDeck}
+              matches={deckMatches}
+              hasSoi={hasSoi}
               onAdjustRole={adjustRoleCount}
-              onResetComposition={resetComposition}
+              onReset={resetComposition}
+              onBack={goToSetupCount}
               onStart={startGame}
             />
           ) : phase === "night" ? (
@@ -200,10 +467,21 @@ function Session({
               nightStep={nightStep}
               nightTurns={nightTurns}
               currentRole={currentNightRole}
+              composition={composition}
               players={players}
-              selectedTarget={selectedTarget}
-              onSelectTarget={setSelectedTarget}
-              onAdvance={advanceNight}
+              roles={roles}
+              substep={nightSubStep}
+              selectedTargets={selectedTargets}
+              witchHealUsed={witchHealUsed}
+              witchPoisonUsed={witchPoisonUsed}
+              witchBittenPlayers={witchBittenPlayers}
+              onToggleIdentify={toggleIdentifyMark}
+              onIdentifyContinue={onIdentifyContinue}
+              onSelectTarget={onSelectTarget}
+              onAdvance={onActionAdvance}
+              onWitchHeal={onWitchHeal}
+              onWitchPoison={onWitchPoison}
+              onWitchConfirm={onWitchConfirm}
             />
           ) : (
             <DayView
@@ -220,19 +498,15 @@ function Session({
           )}
         </ScrollView>
       </View>
+
+      <FactionRevealModal reveal={reveal} players={players} onClose={onRevealClose} />
     </SafeAreaView>
   );
 }
 
 // ---- Header --------------------------------------------------------------
 
-function Header({
-  title,
-  onBack,
-}: {
-  title: string;
-  onBack: () => void;
-}) {
+function Header({ title, onBack }: { title: string; onBack: () => void }) {
   return (
     <View style={styles.header}>
       <TouchableOpacity onPress={onBack} style={styles.side} activeOpacity={0.7}>
@@ -246,33 +520,17 @@ function Header({
   );
 }
 
-// ---- Setup ---------------------------------------------------------------
+// ---- Setup count ---------------------------------------------------------
 
-function SetupView(props: {
+function SetupCountView({
+  players,
+  onAdjustPlayers,
+  onContinue,
+}: {
   players: Player[];
-  roles: ToolCard[];
-  composition: Record<string, number>;
-  totalComposition: number;
-  matches: boolean;
   onAdjustPlayers: (delta: number) => void;
-  onRenamePlayer: (id: string, name: string) => void;
-  onAdjustRole: (roleId: string, delta: number) => void;
-  onResetComposition: () => void;
-  onStart: () => void;
+  onContinue: () => void;
 }) {
-  const {
-    players,
-    roles,
-    composition,
-    totalComposition,
-    matches,
-    onAdjustPlayers,
-    onRenamePlayer,
-    onAdjustRole,
-    onResetComposition,
-    onStart,
-  } = props;
-
   return (
     <View>
       <View style={styles.card}>
@@ -280,36 +538,78 @@ function SetupView(props: {
           <Text style={styles.cardTitle}>Số người chơi</Text>
           <Stepper value={players.length} onDelta={onAdjustPlayers} />
         </View>
-        <View style={{ marginTop: 10 }}>
-          {players.map((p, idx) => (
-            <View key={p.id} style={styles.playerInputRow}>
-              <View style={styles.avatar}>
-                <Text style={styles.avatarText}>{idx + 1}</Text>
-              </View>
-              <TextInput
-                style={styles.playerInput}
-                value={p.name}
-                onChangeText={(t) => onRenamePlayer(p.id, t)}
-                placeholder={`Người ${idx + 1}`}
-                placeholderTextColor="#666"
-              />
-            </View>
-          ))}
-        </View>
+        <Text style={styles.gridHint}>
+          Mỗi vòng là 1 ghế ngồi. Bước tiếp theo bạn sẽ chọn lá bài cho ván.
+        </Text>
+        <CircleBoard
+          players={players}
+          centerLabel="người chơi"
+          size={Math.min(SCREEN_WIDTH - 64, 360)}
+        />
       </View>
+
+      <TouchableOpacity
+        onPress={onContinue}
+        activeOpacity={0.85}
+        style={styles.primaryBtn}
+      >
+        <Text style={styles.primaryBtnText}>Tiếp tục ▸</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+// ---- Setup deck ----------------------------------------------------------
+
+function SetupDeckView(props: {
+  players: Player[];
+  roles: ToolCard[];
+  composition: Record<string, number>;
+  totalDeck: number;
+  matches: boolean;
+  hasSoi: boolean;
+  onAdjustRole: (roleId: string, delta: number) => void;
+  onReset: () => void;
+  onBack: () => void;
+  onStart: () => void;
+}) {
+  const {
+    players,
+    roles,
+    composition,
+    totalDeck,
+    matches,
+    hasSoi,
+    onAdjustRole,
+    onReset,
+    onBack,
+    onStart,
+  } = props;
+
+  const canStart = matches && hasSoi;
+
+  return (
+    <View>
+      <TouchableOpacity onPress={onBack} style={styles.subBackBtn} activeOpacity={0.7}>
+        <Text style={styles.subBackText}>‹ Đổi số người chơi</Text>
+      </TouchableOpacity>
 
       <View style={styles.card}>
         <View style={styles.row}>
-          <Text style={styles.cardTitle}>Vai trò</Text>
+          <Text style={styles.cardTitle}>Lá bài trong ván</Text>
           <Text
             style={[
               styles.compTotal,
               matches ? styles.compTotalOk : styles.compTotalBad,
             ]}
           >
-            {totalComposition} / {players.length}
+            {totalDeck} / {players.length}
           </Text>
         </View>
+        <Text style={styles.gridHint}>
+          Chọn bao nhiêu lá cho mỗi vai. Tổng phải khớp số người chơi.
+        </Text>
+
         {roles.map((r) => (
           <View key={r.id} style={styles.roleRow}>
             <View style={{ flex: 1 }}>
@@ -332,23 +632,23 @@ function SetupView(props: {
           </View>
         ))}
 
-        <TouchableOpacity
-          onPress={onResetComposition}
-          activeOpacity={0.8}
-          style={styles.linkBtn}
-        >
+        <TouchableOpacity onPress={onReset} activeOpacity={0.8} style={styles.linkBtn}>
           <Text style={styles.linkBtnText}>↺ Đặt lại theo gợi ý</Text>
         </TouchableOpacity>
       </View>
 
       <TouchableOpacity
         onPress={onStart}
-        disabled={!matches}
+        disabled={!canStart}
         activeOpacity={0.85}
-        style={[styles.primaryBtn, !matches && styles.primaryBtnDisabled]}
+        style={[styles.primaryBtn, !canStart && styles.primaryBtnDisabled]}
       >
         <Text style={styles.primaryBtnText}>
-          {matches ? "Phát bài & bắt đầu" : "Cần đủ số vai khớp người chơi"}
+          {!hasSoi
+            ? "Cần ít nhất 1 Sói"
+            : !matches
+            ? "Tổng lá chưa khớp số người chơi"
+            : "Bắt đầu ván"}
         </Text>
       </TouchableOpacity>
     </View>
@@ -357,17 +657,31 @@ function SetupView(props: {
 
 // ---- Night ---------------------------------------------------------------
 
-function NightView(props: {
+type NightViewProps = {
   dayNum: number;
   nightStep: number;
   nightTurns: ToolCard[];
   currentRole: ToolCard | undefined;
+  composition: Record<string, number>;
   players: Player[];
-  selectedTarget: string | null;
+  roles: ToolCard[];
+  substep: NightSubStep;
+  selectedTargets: string[];
+  witchHealUsed: boolean;
+  witchPoisonUsed: boolean;
+  witchBittenPlayers: Player[];
+  onToggleIdentify: (playerId: string) => void;
+  onIdentifyContinue: () => void;
   onSelectTarget: (id: string) => void;
   onAdvance: (action: "act" | "skip") => void;
-}) {
-  const { nightStep, nightTurns, currentRole, players, selectedTarget } = props;
+  onWitchHeal: (id: string) => void;
+  onWitchPoison: (id: string) => void;
+  onWitchConfirm: () => void;
+};
+
+function NightView(props: NightViewProps) {
+  const { nightStep, nightTurns, currentRole, composition, players, substep } =
+    props;
 
   if (!currentRole) {
     return (
@@ -384,38 +698,107 @@ function NightView(props: {
     );
   }
 
-  return (
-    <View>
-      <View style={styles.nightHeader}>
-        <Text style={styles.nightProgress}>
-          Vai {nightStep + 1} / {nightTurns.length}
+  if (substep === "identify") {
+    const expected = composition[currentRole.id] ?? 0;
+    const marked = players.filter((p) => p.roleId === currentRole.id).length;
+    const canContinue = marked === expected;
+
+    return (
+      <View>
+        <RoleBanner
+          step={nightStep}
+          total={nightTurns.length}
+          role={currentRole}
+          tag="Xác định danh tính"
+        />
+
+        <View style={styles.card}>
+          <Text style={styles.scriptLabel}>LỜI DẪN</Text>
+          <Text style={styles.scriptText}>
+            Mời {currentRole.name} thức dậy. Đánh dấu {expected} người chơi vai
+            này, sau đó nhắm mắt lại.
+          </Text>
+          <Text style={styles.identifyCounter}>
+            Đã đánh dấu: {marked} / {expected}
+          </Text>
+        </View>
+
+        <Text style={styles.gridHint}>
+          Chạm 1 người để gắn vai · chạm lại để bỏ. Người đã có vai khác bị
+          khóa.
         </Text>
-        <Text style={styles.nightRoleName}>{currentRole.name}</Text>
-        <Text
+        <CircleBoard
+          players={players}
+          roles={props.roles}
+          markedRoleId={currentRole.id}
+          lockOthers={true}
+          showRoles={true}
+          onTap={props.onToggleIdentify}
+        />
+
+        <TouchableOpacity
+          onPress={props.onIdentifyContinue}
+          disabled={!canContinue}
+          activeOpacity={0.85}
           style={[
-            styles.roleFaction,
-            currentRole.faction === "Sói"
-              ? styles.factionWolf
-              : styles.factionVillager,
+            styles.primaryBtn,
+            !canContinue && styles.primaryBtnDisabled,
           ]}
         >
-          {currentRole.group}
-        </Text>
+          <Text style={styles.primaryBtnText}>
+            {canContinue
+              ? "Tiếp tục ▸"
+              : `Cần đánh dấu thêm ${expected - marked} người`}
+          </Text>
+        </TouchableOpacity>
       </View>
+    );
+  }
+
+  // substep === "action": dispatch by role
+  if (currentRole.id === "phu-thuy") {
+    return <PhuThuyAction {...props} />;
+  }
+  return <GenericAction {...props} />;
+}
+
+function GenericAction(props: NightViewProps) {
+  const { nightStep, nightTurns, currentRole, players, selectedTargets } = props;
+  if (!currentRole) return null;
+
+  const targets = currentRole.actionTargets ?? 1;
+  const remaining = targets - selectedTargets.length;
+
+  return (
+    <View>
+      <RoleBanner
+        step={nightStep}
+        total={nightTurns.length}
+        role={currentRole}
+        tag={targets === 2 ? "Chọn 2 mục tiêu" : "Hành động"}
+      />
 
       <View style={styles.card}>
         <Text style={styles.scriptLabel}>LỜI DẪN</Text>
         <Text style={styles.scriptText}>{currentRole.nightInstruction}</Text>
+        {targets > 1 && (
+          <Text style={styles.identifyCounter}>
+            Đã chọn: {selectedTargets.length} / {targets}
+          </Text>
+        )}
       </View>
 
       <Text style={styles.gridHint}>
-        Chọn mục tiêu (tùy chọn) — chạm 1 người chơi còn sống.
+        {targets > 1
+          ? `Chọn ${targets} người · chạm lại để bỏ.`
+          : "Chọn mục tiêu (tùy chọn) — chạm 1 người chơi còn sống."}
       </Text>
-      <PlayerGrid
-        players={players.filter((p) => p.alive)}
-        selected={selectedTarget}
+      <CircleBoard
+        players={players}
+        roles={props.roles}
+        selectedIds={selectedTargets}
+        showRoles={true}
         onTap={props.onSelectTarget}
-        showRoles={false}
       />
 
       <View style={styles.rowGap}>
@@ -428,12 +811,196 @@ function NightView(props: {
         </TouchableOpacity>
         <TouchableOpacity
           onPress={() => props.onAdvance("act")}
+          disabled={targets > 1 && remaining > 0}
           activeOpacity={0.85}
-          style={[styles.primaryBtn, { flex: 1, marginTop: 0 }]}
+          style={[
+            styles.primaryBtn,
+            { flex: 1, marginTop: 0 },
+            targets > 1 && remaining > 0 && styles.primaryBtnDisabled,
+          ]}
         >
-          <Text style={styles.primaryBtnText}>Ghi nhận & tiếp ▸</Text>
+          <Text style={styles.primaryBtnText}>
+            {targets > 1 && remaining > 0
+              ? `Chọn thêm ${remaining}`
+              : "Xác nhận ▸"}
+          </Text>
         </TouchableOpacity>
       </View>
+    </View>
+  );
+}
+
+function PhuThuyAction(props: NightViewProps) {
+  const {
+    nightStep,
+    nightTurns,
+    currentRole,
+    players,
+    selectedTargets,
+    witchHealUsed,
+    witchPoisonUsed,
+    witchBittenPlayers,
+  } = props;
+  const [poisonMode, setPoisonMode] = useState(false);
+  if (!currentRole) return null;
+
+  const noBitten = witchBittenPlayers.length === 0;
+  const healDisabled = witchHealUsed || noBitten;
+
+  return (
+    <View>
+      <RoleBanner
+        step={nightStep}
+        total={nightTurns.length}
+        role={currentRole}
+        tag="Hành động"
+      />
+
+      <View style={styles.card}>
+        <Text style={styles.scriptLabel}>LỜI DẪN</Text>
+        <Text style={styles.scriptText}>{currentRole.nightInstruction}</Text>
+      </View>
+
+      {/* Heal section */}
+      <View style={styles.card}>
+        <View style={styles.row}>
+          <Text style={styles.cardTitle}>Bình hồi sinh</Text>
+          <Text
+            style={[
+              styles.potionStatus,
+              witchHealUsed
+                ? styles.potionStatusUsed
+                : styles.potionStatusActive,
+            ]}
+          >
+            {witchHealUsed ? "đã dùng" : "còn 1 bình"}
+          </Text>
+        </View>
+        <Text style={styles.potionHint}>
+          {witchHealUsed
+            ? "Đã dùng ở đêm trước — không thể cứu thêm."
+            : noBitten
+            ? "Đêm nay Sói không cắn ai · không có người cần cứu."
+            : witchBittenPlayers.length === 1
+            ? `Chạm vào ${witchBittenPlayers[0].name} (viền đỏ) để cứu, hoặc bỏ qua.`
+            : `Chạm 1 người bị cắn (viền đỏ) để cứu:`}
+        </Text>
+        <CircleBoard
+          players={players}
+          roles={props.roles}
+          selectableIds={
+            healDisabled ? [] : witchBittenPlayers.map((p) => p.id)
+          }
+          showRoles={true}
+          onTap={props.onWitchHeal}
+          size={Math.min(SCREEN_WIDTH - 64, 320)}
+        />
+      </View>
+
+      {/* Poison section */}
+      <View style={styles.card}>
+        <View style={styles.row}>
+          <Text style={styles.cardTitle}>Bình thuốc độc</Text>
+          <Text
+            style={[
+              styles.potionStatus,
+              witchPoisonUsed
+                ? styles.potionStatusUsed
+                : styles.potionStatusActive,
+            ]}
+          >
+            {witchPoisonUsed ? "đã dùng" : "còn 1 bình"}
+          </Text>
+        </View>
+        {witchPoisonUsed ? (
+          <Text style={styles.potionHint}>Đã dùng ở đêm trước.</Text>
+        ) : !poisonMode ? (
+          <TouchableOpacity
+            onPress={() => setPoisonMode(true)}
+            activeOpacity={0.85}
+            style={[styles.potionBtn, styles.potionBtnPoison]}
+          >
+            <Text style={styles.potionBtnText}>Dùng bình thuốc độc</Text>
+          </TouchableOpacity>
+        ) : (
+          <View>
+            <Text style={styles.potionHint}>
+              Chọn 1 người để đầu độc:
+            </Text>
+            <CircleBoard
+              players={players}
+              roles={props.roles}
+              selectedIds={selectedTargets}
+              showRoles={true}
+              onTap={props.onSelectTarget}
+              size={Math.min(SCREEN_WIDTH - 64, 320)}
+            />
+            <View style={styles.rowGap}>
+              <TouchableOpacity
+                onPress={() => {
+                  setPoisonMode(false);
+                }}
+                activeOpacity={0.8}
+                style={[styles.secondaryBtn, { flex: 1 }]}
+              >
+                <Text style={styles.secondaryBtnText}>Hủy</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                disabled={selectedTargets.length !== 1}
+                onPress={() => {
+                  props.onWitchPoison(selectedTargets[0]);
+                  setPoisonMode(false);
+                }}
+                activeOpacity={0.85}
+                style={[
+                  styles.primaryBtn,
+                  { flex: 1, marginTop: 0 },
+                  selectedTargets.length !== 1 && styles.primaryBtnDisabled,
+                ]}
+              >
+                <Text style={styles.primaryBtnText}>Đầu độc</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+      </View>
+
+      <TouchableOpacity
+        onPress={props.onWitchConfirm}
+        activeOpacity={0.85}
+        style={styles.primaryBtn}
+      >
+        <Text style={styles.primaryBtnText}>Xong · sang ngày ▸</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+function RoleBanner({
+  step,
+  total,
+  role,
+  tag,
+}: {
+  step: number;
+  total: number;
+  role: ToolCard;
+  tag: string;
+}) {
+  return (
+    <View style={styles.nightHeader}>
+      <Text style={styles.nightProgress}>
+        Vai {step + 1} / {total} · {tag}
+      </Text>
+      <Text style={styles.nightRoleName}>{role.name}</Text>
+      <Text
+        style={[
+          styles.roleFaction,
+          role.faction === "Sói" ? styles.factionWolf : styles.factionVillager,
+        ]}
+      >
+        {role.group}
+      </Text>
     </View>
   );
 }
@@ -468,12 +1035,11 @@ function DayView(props: {
         <Text style={styles.gridHint}>
           Chạm vào người chơi để chuyển sống ↔ chết.
         </Text>
-        <PlayerGrid
+        <CircleBoard
           players={players}
-          selected={null}
-          onTap={props.onToggleAlive}
-          showRoles={revealRoles}
           roles={roles}
+          showRoles={revealRoles}
+          onTap={props.onToggleAlive}
         />
       </View>
 
@@ -533,13 +1099,7 @@ function Endgame({
 
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Lộ tất cả vai trò</Text>
-        <PlayerGrid
-          players={players}
-          selected={null}
-          onTap={() => {}}
-          showRoles={true}
-          roles={roles}
-        />
+        <CircleBoard players={players} roles={roles} showRoles={true} />
       </View>
 
       <TouchableOpacity
@@ -553,63 +1113,182 @@ function Endgame({
   );
 }
 
-// ---- Player grid ---------------------------------------------------------
+// ---- Faction reveal modal (Tiên tri) -------------------------------------
 
-function PlayerGrid({
+function FactionRevealModal({
+  reveal,
   players,
-  selected,
-  onTap,
-  showRoles,
-  roles,
+  onClose,
 }: {
+  reveal: { playerId: string; faction: "Sói" | "Dân" } | null;
   players: Player[];
-  selected: string | null;
-  onTap: (id: string) => void;
-  showRoles: boolean;
-  roles?: ToolCard[];
+  onClose: () => void;
 }) {
-  const findRole = (id: string | null): ToolCard | undefined =>
-    roles && id ? roles.find((r) => r.id === id) : undefined;
+  if (!reveal) return null;
+  const player = players.find((p) => p.id === reveal.playerId);
+  const isWolf = reveal.faction === "Sói";
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.modalBackdrop}>
+        <View
+          style={[
+            styles.revealCard,
+            { backgroundColor: isWolf ? "#7C2929" : "#37412B" },
+          ]}
+        >
+          <Text style={styles.revealLabel}>TIÊN TRI SOI</Text>
+          <Text style={styles.revealName}>{player?.name ?? "?"}</Text>
+          <Text style={styles.revealFaction}>
+            thuộc phe {isWolf ? "SÓI" : "DÂN"}
+          </Text>
+          <TouchableOpacity
+            onPress={onClose}
+            activeOpacity={0.85}
+            style={styles.revealBtn}
+          >
+            <Text style={styles.revealBtnText}>Đóng & tiếp ▸</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+// ---- Circle board --------------------------------------------------------
+
+type CircleBoardProps = {
+  players: Player[];
+  size?: number;
+  centerLabel?: string;
+  /** Multi-selection: outlines all listed players. */
+  selectedIds?: string[];
+  markedRoleId?: string | null;
+  lockOthers?: boolean;
+  /** When set, only these players can be tapped; others appear dimmed. */
+  selectableIds?: string[];
+  showRoles?: boolean;
+  roles?: ToolCard[];
+  onTap?: (id: string) => void;
+};
+
+function CircleBoard({
+  players,
+  size,
+  centerLabel = "còn sống",
+  selectedIds = [],
+  markedRoleId = null,
+  lockOthers = false,
+  selectableIds,
+  showRoles = true,
+  roles,
+  onTap,
+}: CircleBoardProps) {
+  const W = size ?? Math.min(SCREEN_WIDTH - 32, 360);
+  const seatR = players.length <= 8 ? 30 : players.length <= 12 ? 26 : 22;
+  const margin = 14;
+  const ringR = W / 2 - seatR - margin;
+  const cx = W / 2;
+  const cy = W / 2;
+
+  const aliveCount = players.filter((p) => p.alive).length;
+  const displayCount =
+    centerLabel === "còn sống" ? aliveCount : players.length;
+  const selectedSet = new Set(selectedIds);
 
   return (
-    <View style={styles.grid}>
-      {players.map((p) => {
-        const role = findRole(p.roleId);
-        const isSelected = selected === p.id;
+    <View style={[styles.tableArea, { width: W, height: W }]}>
+      <View style={styles.tableSurface} />
+      <View style={styles.tableCenter}>
+        <Text style={styles.tableCenterCount}>{displayCount}</Text>
+        <Text style={styles.tableCenterLabel}>{centerLabel}</Text>
+      </View>
+
+      {players.map((p, i) => {
+        const angle = -Math.PI / 2 + (i * 2 * Math.PI) / players.length;
+        const x = cx + ringR * Math.cos(angle);
+        const y = cy + ringR * Math.sin(angle);
+        const role = roles?.find((r) => r.id === p.roleId);
+        const isSelected = selectedSet.has(p.id);
+        const isLockedOther =
+          lockOthers && p.roleId != null && p.roleId !== markedRoleId;
+        const isUnselectable =
+          selectableIds != null && !selectableIds.includes(p.id);
+        const isDead = !p.alive;
+        const disabled = isDead || isLockedOther || isUnselectable || !onTap;
+
+        // Background by role faction (only when roles are revealed)
+        let bgStyle: any = styles.seatDefault;
+        if (showRoles && role) {
+          if (role.faction === "Sói") bgStyle = styles.seatWolf;
+          else if (role.id !== DAN_ID) bgStyle = styles.seatSpecial;
+        }
+
+        // Border + status colour from top-priority status
+        const status = topStatus(p.statuses);
+        const statusColor = status ? STATUS_VISUAL[status].color : undefined;
+
+        // Sub-label priority: dead → status → role
+        const subLabel = isDead
+          ? "✕ chết"
+          : status
+          ? STATUS_VISUAL[status].label
+          : showRoles && role
+          ? role.name
+          : isLockedOther && role
+          ? role.name
+          : null;
+
         return (
           <TouchableOpacity
             key={p.id}
-            onPress={() => onTap(p.id)}
-            activeOpacity={0.8}
-            style={[
-              styles.playerCell,
-              !p.alive && styles.playerCellDead,
-              isSelected && styles.playerCellSelected,
-            ]}
+            onPress={onTap ? () => onTap(p.id) : undefined}
+            disabled={disabled}
+            activeOpacity={0.7}
+            style={{
+              position: "absolute",
+              left: x - seatR,
+              top: y - seatR,
+              width: seatR * 2,
+              alignItems: "center",
+              opacity: isDead
+                ? 0.45
+                : isLockedOther || isUnselectable
+                ? 0.45
+                : 1,
+            }}
           >
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{p.id}</Text>
-            </View>
-            <Text
-              style={[styles.playerName, !p.alive && styles.deadText]}
-              numberOfLines={1}
+            <View
+              style={[
+                styles.seat,
+                {
+                  width: seatR * 2,
+                  height: seatR * 2,
+                  borderRadius: seatR,
+                },
+                bgStyle,
+                isSelected && styles.seatSelected,
+                statusColor != null && {
+                  borderColor: statusColor,
+                  borderWidth: 3,
+                },
+              ]}
             >
-              {p.name}
-            </Text>
-            {showRoles && role && (
+              <Text style={[styles.seatNumber, { fontSize: seatR * 0.7 }]}>
+                {p.id}
+              </Text>
+            </View>
+            {subLabel != null && (
               <Text
                 style={[
-                  styles.playerRole,
-                  role.faction === "Sói"
-                    ? styles.factionWolf
-                    : styles.factionVillager,
+                  styles.seatSubLabel,
+                  isDead && styles.deadText,
+                  status != null && { color: STATUS_VISUAL[status].color },
                 ]}
                 numberOfLines={1}
               >
-                {role.name}
+                {subLabel}
               </Text>
             )}
-            {!p.alive && <Text style={styles.deadBadge}>✕ chết</Text>}
           </TouchableOpacity>
         );
       })}
@@ -677,19 +1356,16 @@ function blankPlayer(num: number): Player {
     name: `Người ${num}`,
     roleId: null,
     alive: true,
+    statuses: [],
   };
 }
 
-function defaultComposition(n: number): Record<string, number> {
-  const r: Record<string, number> = {
-    soi: 0,
-    "tien-tri": 0,
-    "bao-ve": 0,
-    "phu-thuy": 0,
-    "tho-san": 0,
-    cupid: 0,
-    dan: 0,
-  };
+function defaultComposition(
+  n: number,
+  roles: ToolCard[]
+): Record<string, number> {
+  const r: Record<string, number> = {};
+  for (const role of roles) r[role.id] = 0;
   r.soi = Math.max(1, Math.floor(n / 4));
   if (n >= 6) r["tien-tri"] = 1;
   if (n >= 7) r["bao-ve"] = 1;
@@ -697,27 +1373,70 @@ function defaultComposition(n: number): Record<string, number> {
   if (n >= 9) r["tho-san"] = 1;
   if (n >= 12) r.cupid = 1;
   const used = sum(Object.values(r));
-  r.dan = Math.max(0, n - used);
+  r[DAN_ID] = Math.max(0, n - used);
   return r;
 }
 
-function assignRoles(
+/** Bitten (not protected/revived) and Poisoned (not revived) players die. */
+function applyNightDeaths(players: Player[]): Player[] {
+  return players.map((p) => {
+    if (!p.alive) return p;
+    const revived = p.statuses.includes("revived");
+    if (revived) return p;
+    const protectedSelf = p.statuses.includes("protected");
+    const bittenDies = p.statuses.includes("bitten") && !protectedSelf;
+    const poisonedDies = p.statuses.includes("poisoned");
+    return bittenDies || poisonedDies ? { ...p, alive: false } : p;
+  });
+}
+
+/** Hunter / lover chains: keep applying until no more deaths cascade. */
+function applyChains(
   players: Player[],
-  composition: Record<string, number>
+  hunterTargetId: string | null,
+  lovers: [string, string] | null
 ): Player[] {
-  const pool: string[] = [];
-  for (const [roleId, count] of Object.entries(composition)) {
-    for (let i = 0; i < count; i++) pool.push(roleId);
+  let result = players;
+  let changed = true;
+  while (changed) {
+    changed = false;
+
+    // Hunter chain: if any Hunter (tho-san) just died, kill their marked target.
+    const hunterDead = result.some(
+      (p) => p.roleId === "tho-san" && !p.alive
+    );
+    if (hunterDead && hunterTargetId) {
+      const target = result.find((p) => p.id === hunterTargetId);
+      if (target && target.alive) {
+        result = result.map((p) =>
+          p.id === hunterTargetId ? { ...p, alive: false } : p
+        );
+        changed = true;
+      }
+    }
+
+    // Lovers chain.
+    if (lovers) {
+      const [a, b] = lovers;
+      const pa = result.find((p) => p.id === a);
+      const pb = result.find((p) => p.id === b);
+      if (pa && pb) {
+        if (!pa.alive && pb.alive) {
+          result = result.map((p) =>
+            p.id === b ? { ...p, alive: false } : p
+          );
+          changed = true;
+        }
+        if (!pb.alive && pa.alive) {
+          result = result.map((p) =>
+            p.id === a ? { ...p, alive: false } : p
+          );
+          changed = true;
+        }
+      }
+    }
   }
-  for (let i = pool.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [pool[i], pool[j]] = [pool[j], pool[i]];
-  }
-  return players.map((p, idx) => ({
-    ...p,
-    roleId: pool[idx] ?? null,
-    alive: true,
-  }));
+  return result;
 }
 
 function checkWinner(
@@ -730,15 +1449,14 @@ function checkWinner(
     const r = roles.find((x) => x.id === p.roleId);
     return r?.faction === "Sói";
   }).length;
-  // The game only ends after roles have been assigned.
-  if (!players.every((p) => p.roleId)) return null;
   if (wolves === 0) return "Dân";
   if (wolves >= alive.length - wolves) return "Sói";
   return null;
 }
 
 function phaseLabel(phase: Phase, dayNum: number): string {
-  if (phase === "setup") return "Thiết lập";
+  if (phase === "setup-count") return "Số người chơi";
+  if (phase === "setup-deck") return "Chọn lá bài";
   if (phase === "night") return `Đêm ${dayNum}`;
   return `Ngày ${dayNum}`;
 }
@@ -768,29 +1486,9 @@ const styles = StyleSheet.create({
     color: "#F2F2F2",
     textAlign: "center",
   },
-  modeBox: {
-    width: 96,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "flex-end",
-  },
-  modeBoxLabel: {
-    color: "#A8A39B",
-    fontSize: 12,
-    fontWeight: "700",
-    marginLeft: 6,
-  },
 
-  aiPanel: {
-    backgroundColor: "#37412B",
-    borderLeftWidth: 3,
-    borderLeftColor: "#7FA650",
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 12,
-  },
-  aiTitle: { color: "#C5DC9E", fontSize: 13, fontWeight: "800", marginBottom: 4 },
-  aiBody: { color: "#D8D2C8", fontSize: 13, lineHeight: 18 },
+  subBackBtn: { paddingVertical: 8, marginBottom: 4 },
+  subBackText: { color: "#7FA650", fontSize: 14, fontWeight: "700" },
 
   card: {
     backgroundColor: "#3A3733",
@@ -803,45 +1501,61 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
   },
-  rowGap: {
-    flexDirection: "row",
-    gap: 10,
-    marginTop: 10,
-  },
+  rowGap: { flexDirection: "row", gap: 10, marginTop: 10 },
   cardTitle: { color: "#FFFFFF", fontSize: 16, fontWeight: "700" },
 
-  playerInputRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: 8,
+  // --- Circle table
+  tableArea: { alignSelf: "center", marginTop: 16, position: "relative" },
+  tableSurface: {
+    position: "absolute",
+    left: "12%",
+    top: "12%",
+    right: "12%",
+    bottom: "12%",
+    borderRadius: 9999,
+    backgroundColor: "#2F2C29",
+    borderWidth: 1,
+    borderColor: "#4A4641",
   },
-  playerInput: {
-    flex: 1,
-    color: "#FFFFFF",
-    fontSize: 15,
-    backgroundColor: "#2A2724",
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    marginLeft: 10,
-  },
-
-  avatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "#5B7DB1",
+  tableCenter: {
+    position: "absolute",
+    left: "30%",
+    top: "30%",
+    right: "30%",
+    bottom: "30%",
     alignItems: "center",
     justifyContent: "center",
   },
-  avatarText: { color: "#FFFFFF", fontWeight: "800", fontSize: 14 },
+  tableCenterCount: { color: "#F2F2F2", fontSize: 30, fontWeight: "800" },
+  tableCenterLabel: { color: "#A8A39B", fontSize: 12, marginTop: 2 },
 
+  // --- Seats
+  seat: {
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+  },
+  seatDefault: { backgroundColor: "#4A4641", borderColor: "#6B655E" },
+  seatSpecial: { backgroundColor: "#3F5A2A", borderColor: "#7FA650" },
+  seatWolf: { backgroundColor: "#5C1E1E", borderColor: "#B22222" },
+  seatSelected: { borderColor: "#F9A825", borderWidth: 3 },
+  seatNumber: { color: "#FFFFFF", fontWeight: "800" },
+  seatSubLabel: {
+    color: "#D8D2C8",
+    fontSize: 10,
+    fontWeight: "700",
+    marginTop: 3,
+    textAlign: "center",
+  },
+
+  // --- Deck composition
   compTotal: {
     fontSize: 15,
     fontWeight: "800",
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 6,
+    overflow: "hidden",
   },
   compTotalOk: { color: "#FFFFFF", backgroundColor: "#7FA650" },
   compTotalBad: { color: "#FFFFFF", backgroundColor: "#B33A3A" },
@@ -864,11 +1578,9 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     borderRadius: 4,
     marginTop: 3,
+    overflow: "hidden",
   },
-  factionWolf: {
-    color: "#FFCFCF",
-    backgroundColor: "rgba(176,40,40,0.35)",
-  },
+  factionWolf: { color: "#FFCFCF", backgroundColor: "rgba(176,40,40,0.35)" },
   factionVillager: {
     color: "#C5DC9E",
     backgroundColor: "rgba(127,166,80,0.25)",
@@ -877,6 +1589,7 @@ const styles = StyleSheet.create({
   linkBtn: { marginTop: 10, alignItems: "center" },
   linkBtnText: { color: "#7FA650", fontSize: 13, fontWeight: "700" },
 
+  // --- Buttons
   primaryBtn: {
     backgroundColor: "#7C2929",
     borderRadius: 10,
@@ -895,6 +1608,7 @@ const styles = StyleSheet.create({
   },
   secondaryBtnText: { color: "#FFFFFF", fontSize: 15, fontWeight: "700" },
 
+  // --- Night banner
   nightHeader: {
     backgroundColor: "#1F1D1B",
     borderRadius: 10,
@@ -902,10 +1616,25 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     alignItems: "center",
   },
-  nightProgress: { color: "#A8A39B", fontSize: 11, fontWeight: "800", letterSpacing: 1 },
-  nightRoleName: { color: "#FFFFFF", fontSize: 26, fontWeight: "800", marginTop: 4 },
+  nightProgress: {
+    color: "#A8A39B",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1,
+  },
+  nightRoleName: {
+    color: "#FFFFFF",
+    fontSize: 26,
+    fontWeight: "800",
+    marginTop: 4,
+  },
 
-  scriptLabel: { color: "#A8A39B", fontSize: 11, fontWeight: "800", letterSpacing: 1 },
+  scriptLabel: {
+    color: "#A8A39B",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1,
+  },
   scriptText: {
     color: "#FFFFFF",
     fontSize: 15,
@@ -913,52 +1642,62 @@ const styles = StyleSheet.create({
     marginTop: 6,
     fontStyle: "italic",
   },
-
-  gridHint: { color: "#A8A39B", fontSize: 12, marginVertical: 8 },
-  grid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    marginHorizontal: -4,
-  },
-  playerCell: {
-    width: "33.33%",
-    paddingHorizontal: 4,
-    paddingVertical: 4,
-    alignItems: "center",
-  },
-  playerCellSelected: {},
-  playerCellDead: { opacity: 0.5 },
-  playerName: {
-    color: "#FFFFFF",
-    fontSize: 13,
-    fontWeight: "700",
-    marginTop: 4,
-    textAlign: "center",
-  },
-  playerRole: {
-    fontSize: 10,
+  identifyCounter: {
+    color: "#7FA650",
+    fontSize: 14,
     fontWeight: "800",
-    textTransform: "uppercase",
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-    marginTop: 3,
-  },
-  deadText: { textDecorationLine: "line-through", color: "#888" },
-  deadBadge: {
-    fontSize: 10,
-    color: "#FF8A8A",
-    fontWeight: "700",
-    marginTop: 2,
+    marginTop: 10,
   },
 
+  // --- Witch
+  potionStatus: {
+    fontSize: 11,
+    fontWeight: "800",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+    textTransform: "uppercase",
+    overflow: "hidden",
+  },
+  potionStatusActive: {
+    color: "#FFFFFF",
+    backgroundColor: "#43A047",
+  },
+  potionStatusUsed: {
+    color: "#A8A39B",
+    backgroundColor: "#4A4641",
+  },
+  potionHint: {
+    color: "#D8D2C8",
+    fontSize: 13,
+    lineHeight: 19,
+    marginTop: 6,
+  },
+  potionOptions: {
+    marginTop: 10,
+    gap: 8,
+  },
+  potionBtn: {
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: "center",
+    marginTop: 10,
+  },
+  potionBtnHeal: { backgroundColor: "#2E7D32" },
+  potionBtnPoison: { backgroundColor: "#6A1B9A" },
+  potionBtnText: { color: "#FFFFFF", fontSize: 14, fontWeight: "800" },
+
+  // --- Day
+  gridHint: { color: "#A8A39B", fontSize: 12, marginVertical: 8 },
   logEntry: {
     color: "#D8D2C8",
     fontSize: 13,
     lineHeight: 20,
     marginTop: 4,
   },
+  deadText: { textDecorationLine: "line-through", color: "#888" },
 
+  // --- Stepper
   stepper: {
     flexDirection: "row",
     alignItems: "center",
@@ -981,6 +1720,7 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
 
+  // --- Endgame
   winBanner: {
     borderRadius: 12,
     paddingVertical: 24,
@@ -995,4 +1735,48 @@ const styles = StyleSheet.create({
     opacity: 0.7,
   },
   winText: { color: "#FFFFFF", fontSize: 26, fontWeight: "800", marginTop: 4 },
+
+  // --- Reveal modal
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.7)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 24,
+  },
+  revealCard: {
+    borderRadius: 16,
+    paddingVertical: 32,
+    paddingHorizontal: 24,
+    alignItems: "center",
+    width: "100%",
+    maxWidth: 320,
+  },
+  revealLabel: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 2,
+    opacity: 0.8,
+  },
+  revealName: {
+    color: "#FFFFFF",
+    fontSize: 28,
+    fontWeight: "800",
+    marginTop: 6,
+  },
+  revealFaction: {
+    color: "#FFFFFF",
+    fontSize: 18,
+    fontWeight: "700",
+    marginTop: 4,
+  },
+  revealBtn: {
+    backgroundColor: "rgba(255,255,255,0.18)",
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 10,
+    marginTop: 20,
+  },
+  revealBtnText: { color: "#FFFFFF", fontSize: 15, fontWeight: "800" },
 });

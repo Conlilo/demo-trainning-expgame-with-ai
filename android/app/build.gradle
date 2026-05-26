@@ -113,9 +113,9 @@ android {
 
     compileSdkVersion rootProject.ext.compileSdkVersion
 
-    namespace "com.aiboardsuite"
+    namespace "com.boardgame.staging"
     defaultConfig {
-        applicationId "com.aiboardsuite"
+        applicationId "com.boardgame.staging"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

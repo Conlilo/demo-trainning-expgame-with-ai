@@ -1,5 +1,14 @@
 import { Chess, Move } from "./engine";
 
+export type Difficulty = "easy" | "medium" | "hard";
+
+/** How many plies the engine searches at each difficulty level. */
+export const DIFFICULTY_DEPTH: Record<Difficulty, number> = {
+  easy: 1, // greedy — captures hanging pieces but doesn't see threats
+  medium: 2, // sees the opponent's reply, avoids simple blunders
+  hard: 3, // finds short tactical sequences
+};
+
 // Material values in centipawns. The king is never captured, so it has no value.
 const PIECE_VALUE: Record<string, number> = {
   p: 100,

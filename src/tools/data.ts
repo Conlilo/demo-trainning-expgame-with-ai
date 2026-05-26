@@ -22,6 +22,8 @@ export type ToolCard = {
   nightInstruction?: string;
   /** True if this role acts only on the first night (e.g. Cupid). */
   onlyFirstNight?: boolean;
+  /** Number of players the role picks during its action (Cupid = 2, others = 1). Default 1. */
+  actionTargets?: number;
 };
 
 /** A numeric counter shown on the play-session screen — e.g. "Cọc rút". */
@@ -162,9 +164,9 @@ Ván kết thúc khi:
       name: "Sói",
       group: "Phe Sói",
       faction: "Sói",
-      nightOrder: 30,
+      nightOrder: 20,
       nightInstruction:
-        "Các Sói thức dậy. Hãy thống nhất chọn 1 người để cắn.",
+        "Đàn Sói thống nhất chọn 1 người để cắn.",
       description:
         "Mỗi đêm, các Sói cùng nhau chọn 1 người để cắn. Mục tiêu: ăn cho đến khi số Sói bằng hoặc nhiều hơn số Dân còn lại.",
     },
@@ -173,9 +175,9 @@ Ván kết thúc khi:
       name: "Tiên tri",
       group: "Phe Dân",
       faction: "Dân",
-      nightOrder: 20,
+      nightOrder: 30,
       nightInstruction:
-        "Tiên tri thức dậy. Hãy chỉ vào 1 người — ta sẽ tiết lộ phe của họ.",
+        "Tiên tri chỉ vào 1 người — GM tiết lộ phe của họ.",
       description:
         "Mỗi đêm, được chỉ vào 1 người để biết người đó thuộc phe Sói hay Dân.",
     },
@@ -186,7 +188,7 @@ Ván kết thúc khi:
       faction: "Dân",
       nightOrder: 40,
       nightInstruction:
-        "Bảo vệ thức dậy. Hãy chỉ vào 1 người để bảo vệ đêm nay (không được bảo vệ cùng 1 người 2 đêm liên tiếp).",
+        "Bảo vệ chỉ vào 1 người để bảo vệ đêm nay (không trùng người 2 đêm liền).",
       description:
         "Mỗi đêm, chọn 1 người để bảo vệ. Người được bảo vệ sẽ không chết nếu bị Sói cắn đêm đó. Không được bảo vệ cùng 1 người 2 đêm liền.",
     },
@@ -197,7 +199,7 @@ Ván kết thúc khi:
       faction: "Dân",
       nightOrder: 50,
       nightInstruction:
-        "Phù thủy thức dậy. Sói vừa cắn 1 người. Có dùng bình hồi sinh để cứu? Có dùng bình thuốc độc để giết ai khác?",
+        "Sói vừa cắn 1 người. Phù thủy có dùng bình hồi sinh để cứu, hoặc bình thuốc độc để giết ai khác không?",
       description:
         "Có 1 bình hồi sinh (cứu nạn nhân bị Sói cắn đêm đó) và 1 bình thuốc độc (giết 1 người bất kỳ). Mỗi bình chỉ dùng 1 lần trong cả ván.",
     },
@@ -206,8 +208,11 @@ Ván kết thúc khi:
       name: "Thợ săn",
       group: "Phe Dân",
       faction: "Dân",
+      nightOrder: 45,
+      nightInstruction:
+        "Thợ săn chỉ vào 1 người — nếu Thợ săn chết, người đó cũng chết theo.",
       description:
-        "Khi bị giết (Sói cắn hoặc bị treo cổ), được bắn chết 1 người bất kỳ trước khi tắt thở.",
+        "Mỗi đêm, đánh dấu 1 người sẽ chết theo nếu mình chết (do Sói cắn hoặc bị treo cổ).",
     },
     {
       id: "cupid",
@@ -216,8 +221,9 @@ Ván kết thúc khi:
       faction: "Dân",
       nightOrder: 10,
       onlyFirstNight: true,
+      actionTargets: 2,
       nightInstruction:
-        "Cupid thức dậy. Hãy chỉ vào 2 người để kết đôi. Họ sẽ yêu nhau và cùng sống chết.",
+        "Cupid chỉ vào 2 người để kết đôi. Họ sẽ yêu nhau và cùng sống chết.",
       description:
         "Đêm đầu tiên, chọn 2 người (có thể gồm bản thân) để kết đôi. Nếu 1 trong 2 chết, người còn lại cũng chết theo.",
     },

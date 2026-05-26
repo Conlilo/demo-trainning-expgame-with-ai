@@ -11,7 +11,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Chess } from "../chess/engine";
 import type { Square } from "../chess/engine";
 import ChessBoard from "../components/ChessBoard";
-import { findBestMove } from "../chess/ai";
+import { findBestMove, Difficulty, DIFFICULTY_DEPTH } from "../chess/ai";
 
 const { width } = Dimensions.get("window");
 const BOARD_SIZE = Math.floor(Math.min(width - 24, 440));
@@ -20,6 +20,12 @@ type Mode = "ai" | "two";
 
 // The human always plays White.
 const HUMAN: "w" = "w";
+
+const DIFFICULTY_LABEL: Record<Difficulty, string> = {
+  easy: "Dễ",
+  medium: "Vừa",
+  hard: "Khó",
+};
 
 type Props = {
   onBack: () => void;
@@ -34,6 +40,7 @@ export default function ChessScreen({ onBack }: Props) {
   const [fen, setFen] = useState(game.fen());
   const [selected, setSelected] = useState<Square | null>(null);
   const [mode, setMode] = useState<Mode>("ai");
+  const [difficulty, setDifficulty] = useState<Difficulty>("medium");
   const [thinking, setThinking] = useState(false);
 
   const sync = () => setFen(gameRef.current.fen());
@@ -74,14 +81,17 @@ export default function ChessScreen({ onBack }: Props) {
 
     setThinking(true);
     const timer = setTimeout(() => {
-      const move = findBestMove(gameRef.current.fen(), 3);
+      const move = findBestMove(
+        gameRef.current.fen(),
+        DIFFICULTY_DEPTH[difficulty]
+      );
       if (move) gameRef.current.move(move);
       setThinking(false);
       sync();
     }, 350);
 
     return () => clearTimeout(timer);
-  }, [fen, mode]);
+  }, [fen, mode, difficulty]);
 
   // Android hardware back button returns to the home screen.
   useEffect(() => {
@@ -176,10 +186,14 @@ export default function ChessScreen({ onBack }: Props) {
           <Text style={styles.statusText}>{status}</Text>
           <Text style={styles.subText}>
             {mode === "ai"
-              ? "Bạn cầm quân Trắng · đấu với máy"
+              ? `Bạn cầm quân Trắng · vs AI local (${DIFFICULTY_LABEL[difficulty]})`
               : "2 người chơi trên cùng máy"}
           </Text>
         </View>
+
+        {mode === "ai" && (
+          <DifficultyPicker value={difficulty} onChange={setDifficulty} />
+        )}
 
         <ChessBoard
           board={game.board()}
@@ -195,7 +209,7 @@ export default function ChessScreen({ onBack }: Props) {
           <Button label="Ván mới" onPress={newGame} kind="primary" />
           <Button label="Đi lại" onPress={undo} />
           <Button
-            label={mode === "ai" ? "Chế độ: Máy" : "Chế độ: 2 người"}
+            label={mode === "ai" ? "Chế độ: AI local" : "Chế độ: 2 người"}
             onPress={toggleMode}
           />
         </View>
@@ -226,6 +240,43 @@ type ButtonProps = {
   onPress: () => void;
   kind?: "primary" | "default";
 };
+
+function DifficultyPicker({
+  value,
+  onChange,
+}: {
+  value: Difficulty;
+  onChange: (d: Difficulty) => void;
+}) {
+  const levels: Difficulty[] = ["easy", "medium", "hard"];
+  return (
+    <View style={styles.diffRow}>
+      <Text style={styles.diffLabel}>Độ khó AI</Text>
+      <View style={styles.diffSegments}>
+        {levels.map((d) => (
+          <TouchableOpacity
+            key={d}
+            activeOpacity={0.7}
+            onPress={() => onChange(d)}
+            style={[
+              styles.diffSeg,
+              value === d && styles.diffSegActive,
+            ]}
+          >
+            <Text
+              style={[
+                styles.diffSegText,
+                value === d && styles.diffSegTextActive,
+              ]}
+            >
+              {DIFFICULTY_LABEL[d]}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+    </View>
+  );
+}
 
 function Button({ label, onPress, kind = "default" }: ButtonProps) {
   return (
@@ -297,6 +348,42 @@ const styles = StyleSheet.create({
     color: "#A8A39B",
     fontSize: 13,
     marginTop: 2,
+  },
+  diffRow: {
+    width: BOARD_SIZE,
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  diffLabel: {
+    color: "#A8A39B",
+    fontSize: 13,
+    fontWeight: "700",
+    marginRight: 10,
+  },
+  diffSegments: {
+    flex: 1,
+    flexDirection: "row",
+    backgroundColor: "#2F2C29",
+    borderRadius: 8,
+    padding: 3,
+  },
+  diffSeg: {
+    flex: 1,
+    paddingVertical: 7,
+    borderRadius: 6,
+    alignItems: "center",
+  },
+  diffSegActive: {
+    backgroundColor: "#7FA650",
+  },
+  diffSegText: {
+    color: "#A8A39B",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  diffSegTextActive: {
+    color: "#FFFFFF",
   },
   controls: {
     flexDirection: "row",

@@ -11,13 +11,19 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Xiangqi } from "../xiangqi/engine";
 import type { Square } from "../xiangqi/engine";
 import XiangqiBoard from "../components/XiangqiBoard";
-import { findBestMove } from "../xiangqi/ai";
+import { findBestMove, Difficulty, DIFFICULTY_DEPTH } from "../xiangqi/ai";
 
 const { width } = Dimensions.get("window");
 const BOARD_WIDTH = Math.floor(Math.min(width - 24, 380));
 
 type Mode = "ai" | "two";
 const HUMAN: "r" = "r";
+
+const DIFFICULTY_LABEL: Record<Difficulty, string> = {
+  easy: "Dễ",
+  medium: "Vừa",
+  hard: "Khó",
+};
 
 type Props = {
   onBack: () => void;
@@ -32,6 +38,7 @@ export default function XiangqiScreen({ onBack }: Props) {
   const [version, setVersion] = useState(0);
   const [selected, setSelected] = useState<Square | null>(null);
   const [mode, setMode] = useState<Mode>("ai");
+  const [difficulty, setDifficulty] = useState<Difficulty>("medium");
   const [thinking, setThinking] = useState(false);
 
   const sync = () => setVersion((v) => v + 1);
@@ -66,13 +73,13 @@ export default function XiangqiScreen({ onBack }: Props) {
     if (mode !== "ai" || game.turn() === HUMAN || game.isGameOver()) return;
     setThinking(true);
     const timer = setTimeout(() => {
-      const move = findBestMove(gameRef.current, 3);
+      const move = findBestMove(gameRef.current, DIFFICULTY_DEPTH[difficulty]);
       if (move) gameRef.current.move(move);
       setThinking(false);
       sync();
     }, 350);
     return () => clearTimeout(timer);
-  }, [version, mode]);
+  }, [version, mode, difficulty]);
 
   useEffect(() => {
     const sub = BackHandler.addEventListener("hardwareBackPress", () => {
@@ -158,10 +165,14 @@ export default function XiangqiScreen({ onBack }: Props) {
           <Text style={styles.statusText}>{status}</Text>
           <Text style={styles.subText}>
             {mode === "ai"
-              ? "Bạn cầm quân Đỏ · đấu với máy"
+              ? `Bạn cầm quân Đỏ · vs AI local (${DIFFICULTY_LABEL[difficulty]})`
               : "2 người chơi trên cùng máy"}
           </Text>
         </View>
+
+        {mode === "ai" && (
+          <DifficultyPicker value={difficulty} onChange={setDifficulty} />
+        )}
 
         <XiangqiBoard
           board={game.board()}
@@ -177,7 +188,7 @@ export default function XiangqiScreen({ onBack }: Props) {
           <Button label="Ván mới" onPress={newGame} kind="primary" />
           <Button label="Đi lại" onPress={undo} />
           <Button
-            label={mode === "ai" ? "Chế độ: Máy" : "Chế độ: 2 người"}
+            label={mode === "ai" ? "Chế độ: AI local" : "Chế độ: 2 người"}
             onPress={toggleMode}
           />
         </View>
@@ -207,6 +218,40 @@ type ButtonProps = {
   onPress: () => void;
   kind?: "primary" | "default";
 };
+
+function DifficultyPicker({
+  value,
+  onChange,
+}: {
+  value: Difficulty;
+  onChange: (d: Difficulty) => void;
+}) {
+  const levels: Difficulty[] = ["easy", "medium", "hard"];
+  return (
+    <View style={styles.diffRow}>
+      <Text style={styles.diffLabel}>Độ khó AI</Text>
+      <View style={styles.diffSegments}>
+        {levels.map((d) => (
+          <TouchableOpacity
+            key={d}
+            activeOpacity={0.7}
+            onPress={() => onChange(d)}
+            style={[styles.diffSeg, value === d && styles.diffSegActive]}
+          >
+            <Text
+              style={[
+                styles.diffSegText,
+                value === d && styles.diffSegTextActive,
+              ]}
+            >
+              {DIFFICULTY_LABEL[d]}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+    </View>
+  );
+}
 
 function Button({ label, onPress, kind = "default" }: ButtonProps) {
   return (
@@ -278,6 +323,42 @@ const styles = StyleSheet.create({
     color: "#A8A39B",
     fontSize: 13,
     marginTop: 2,
+  },
+  diffRow: {
+    width: BOARD_WIDTH,
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  diffLabel: {
+    color: "#A8A39B",
+    fontSize: 13,
+    fontWeight: "700",
+    marginRight: 10,
+  },
+  diffSegments: {
+    flex: 1,
+    flexDirection: "row",
+    backgroundColor: "#2F2C29",
+    borderRadius: 8,
+    padding: 3,
+  },
+  diffSeg: {
+    flex: 1,
+    paddingVertical: 7,
+    borderRadius: 6,
+    alignItems: "center",
+  },
+  diffSegActive: {
+    backgroundColor: "#B22222",
+  },
+  diffSegText: {
+    color: "#A8A39B",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  diffSegTextActive: {
+    color: "#FFFFFF",
   },
   controls: {
     flexDirection: "row",

@@ -1,5 +1,14 @@
 import { Xiangqi, Move } from "./engine";
 
+export type Difficulty = "easy" | "medium" | "hard";
+
+/** How many plies the engine searches at each difficulty level. */
+export const DIFFICULTY_DEPTH: Record<Difficulty, number> = {
+  easy: 1, // greedy — only sees one ply
+  medium: 2, // anticipates the opponent's reply
+  hard: 3, // short tactical sequences
+};
+
 // Piece values in centipawn-ish units. The king is handled via checkmate.
 const PIECE_VALUE: Record<string, number> = {
   k: 0,

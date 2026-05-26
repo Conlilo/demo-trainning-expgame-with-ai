@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "AI Board Suite",
-    "slug": "ai-board-suite",
+    "name": "My Library Boardgame",
+    "slug": "my-library-boardgame",
     "version": "0.1.0",
     "platforms": [
       "ios",
@@ -10,7 +10,7 @@
     ],
     "sdkVersion": "48.0.0",
     "android": {
-      "package": "com.chessapp.staging"
+      "package": "com.boardgame.staging"
     }
   }
 }

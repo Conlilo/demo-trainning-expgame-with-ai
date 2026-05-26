@@ -1,4 +1,4 @@
-package com.aiboardsuite;
+package com.boardgame.staging;
 
 import android.os.Build;
 import android.os.Bundle;
