@@ -14,7 +14,7 @@ import {
   SessionCounter,
   ToolCard,
   ToolGame,
-} from "../tools/data";
+} from "../../tools/data";
 
 type Props = {
   gameId: string;
@@ -23,7 +23,7 @@ type Props = {
   onAiModeChange: (value: boolean) => void;
 };
 
-export default function PlaySessionScreen(props: Props) {
+export default function UnoScreen(props: Props) {
   const game = findToolGame(props.gameId);
   if (!game) return <NotFound onBack={props.onBack} />;
   return <SessionView {...props} game={game} />;

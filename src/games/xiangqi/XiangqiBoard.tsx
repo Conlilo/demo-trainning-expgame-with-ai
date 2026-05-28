@@ -7,7 +7,7 @@ import {
   Animated,
   Easing,
 } from "react-native";
-import type { Color, PieceSymbol, Square } from "../xiangqi/engine";
+import type { Color, PieceSymbol, Square } from "./engine";
 
 export type Cell = { type: PieceSymbol; color: Color } | null;
 type LastMove = { from: Square; to: Square } | null;

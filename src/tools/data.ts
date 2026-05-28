@@ -24,6 +24,8 @@ export type ToolCard = {
   onlyFirstNight?: boolean;
   /** Number of players the role picks during its action (Cupid = 2, others = 1). Default 1. */
   actionTargets?: number;
+  /** When true, the role must pick a target (no skip allowed). */
+  mandatory?: boolean;
 };
 
 /** A numeric counter shown on the play-session screen — e.g. "Cọc rút". */
@@ -176,6 +178,7 @@ Ván kết thúc khi:
       group: "Phe Dân",
       faction: "Dân",
       nightOrder: 30,
+      mandatory: true,
       nightInstruction:
         "Tiên tri chỉ vào 1 người — GM tiết lộ phe của họ.",
       description:
@@ -187,6 +190,7 @@ Ván kết thúc khi:
       group: "Phe Dân",
       faction: "Dân",
       nightOrder: 40,
+      mandatory: true,
       nightInstruction:
         "Bảo vệ chỉ vào 1 người để bảo vệ đêm nay (không trùng người 2 đêm liền).",
       description:

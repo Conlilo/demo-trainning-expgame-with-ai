@@ -8,10 +8,10 @@ import {
   BackHandler,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Xiangqi } from "../xiangqi/engine";
-import type { Square } from "../xiangqi/engine";
-import XiangqiBoard from "../components/XiangqiBoard";
-import { findBestMove, Difficulty, DIFFICULTY_DEPTH } from "../xiangqi/ai";
+import { Xiangqi } from "./engine";
+import type { Square } from "./engine";
+import XiangqiBoard from "./XiangqiBoard";
+import { findBestMove, Difficulty, DIFFICULTY_DEPTH } from "./ai";
 
 const { width } = Dimensions.get("window");
 const BOARD_WIDTH = Math.floor(Math.min(width - 24, 380));

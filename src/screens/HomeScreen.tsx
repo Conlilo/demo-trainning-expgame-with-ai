@@ -2,7 +2,7 @@ import React from "react";
 import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-export type Folder = "boardgame" | "tool";
+export type Folder = "boardgame" | "tool" | "logic";
 
 type Props = {
   onSelectFolder: (folder: Folder) => void;
@@ -28,6 +28,13 @@ export default function HomeScreen({ onSelectFolder }: Props) {
           title="Tool"
           subtitle="Công cụ hỗ trợ chơi boardgame ngoài đời"
           onPress={() => onSelectFolder("tool")}
+        />
+        <FolderCard
+          icon="9"
+          iconBg="#D4954A"
+          title="Logic Game"
+          subtitle="Sudoku và các game suy luận"
+          onPress={() => onSelectFolder("logic")}
         />
       </View>
     </SafeAreaView>

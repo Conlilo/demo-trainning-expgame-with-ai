@@ -4,19 +4,25 @@ import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import HomeScreen from "./src/screens/HomeScreen";
 import BoardgameListScreen from "./src/screens/BoardgameListScreen";
+import LogicGameListScreen from "./src/screens/LogicGameListScreen";
 import ToolListScreen from "./src/screens/ToolListScreen";
 import ToolGameScreen from "./src/screens/ToolGameScreen";
-import PlaySessionScreen from "./src/screens/PlaySessionScreen";
-import MaSoiSessionScreen from "./src/screens/MaSoiSessionScreen";
-import ChessScreen from "./src/screens/ChessScreen";
-import XiangqiScreen from "./src/screens/XiangqiScreen";
+import UnoScreen from "./src/games/uno/UnoScreen";
+import MaSoiScreen from "./src/games/masoi";
+import ChessScreen from "./src/games/chess/ChessScreen";
+import XiangqiScreen from "./src/games/xiangqi/XiangqiScreen";
+import SudokuScreen from "./src/games/sudoku/SudokuScreen";
+import QueensScreen from "./src/games/queens/QueensScreen";
 
 type Route =
   | { name: "home" }
   | { name: "boardgame" }
   | { name: "tool" }
+  | { name: "logic" }
   | { name: "chess" }
   | { name: "xiangqi" }
+  | { name: "sudoku" }
+  | { name: "queens" }
   | { name: "tool-game"; gameId: string }
   | { name: "play-session"; gameId: string };
 
@@ -78,10 +84,21 @@ function renderRoute(route: Route, nav: Nav): React.ReactNode {
           onSelectGame={(gameId) => nav.push({ name: "tool-game", gameId })}
         />
       );
+    case "logic":
+      return (
+        <LogicGameListScreen
+          onBack={nav.pop}
+          onSelectGame={(game) => nav.push({ name: game })}
+        />
+      );
     case "chess":
       return <ChessScreen onBack={nav.pop} />;
     case "xiangqi":
       return <XiangqiScreen onBack={nav.pop} />;
+    case "sudoku":
+      return <SudokuScreen onBack={nav.pop} />;
+    case "queens":
+      return <QueensScreen onBack={nav.pop} />;
     case "tool-game":
       return (
         <ToolGameScreen
@@ -96,10 +113,10 @@ function renderRoute(route: Route, nav: Nav): React.ReactNode {
       );
     case "play-session":
       if (route.gameId === "masoi") {
-        return <MaSoiSessionScreen gameId={route.gameId} onBack={nav.pop} />;
+        return <MaSoiScreen gameId={route.gameId} onBack={nav.pop} />;
       }
       return (
-        <PlaySessionScreen
+        <UnoScreen
           gameId={route.gameId}
           onBack={nav.pop}
           aiMode={nav.getAi(route.gameId)}
