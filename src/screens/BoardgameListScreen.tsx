@@ -2,7 +2,7 @@ import React from "react";
 import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-export type BoardgameId = "chess" | "xiangqi";
+export type BoardgameId = "chess" | "xiangqi" | "splendor";
 
 type Props = {
   onBack: () => void;
@@ -38,6 +38,13 @@ export default function BoardgameListScreen({ onBack, onSelectGame }: Props) {
           title="Cờ Tướng"
           subtitle="Đấu với máy hoặc 2 người"
           onPress={() => onSelectGame("xiangqi")}
+        />
+        <GameCard
+          icon="💎"
+          iconBg="#5B7DB1"
+          title="Splendor"
+          subtitle="2–4 người chơi · đấu với máy"
+          onPress={() => onSelectGame("splendor")}
         />
       </View>
     </SafeAreaView>

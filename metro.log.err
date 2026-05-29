@@ -1,0 +1,13 @@
+F:\demo-trainning-expgame-with-ai\node_modules\metro-hermes-compiler\src\emhermesc.js:404
+      throw e;
+      ^
+
+RuntimeError: abort(Error: EPERM: operation not permitted, lstat 'F:\demo-trainning-expgame-with-ai\node_modules\expo-constants\android\build\generated\assets\expo-constants\debug\app.config'). Build with -s ASSERTIONS=1 for more info.
+    at process.abort (F:\demo-trainning-expgame-with-ai\node_modules\metro-hermes-compiler\src\emhermesc.js:402:15)
+    at process.emit (node:events:509:20)
+    at emitUnhandledRejection (node:internal/process/promises:182:13)
+    at throwUnhandledRejectionsMode (node:internal/process/promises:318:19)
+    at processPromiseRejections (node:internal/process/promises:405:17)
+    at process.processTicksAndRejections (node:internal/process/task_queues:106:37)
+
+Node.js v26.2.0
